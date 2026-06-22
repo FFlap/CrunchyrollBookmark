@@ -102,6 +102,37 @@ describe('parseEpisodePage', () => {
     });
   });
 
+  it('waits when JSON-LD still belongs to the previous episode during SPA navigation', () => {
+    const document = makeDocument(
+      `
+        <script type="application/ld+json">
+          {
+            "@type": "TVEpisode",
+            "name": "Season 1 | E7 - Previous Episode",
+            "episodeNumber": 7,
+            "url": "https://www.crunchyroll.com/watch/OLD000001/previous-episode",
+            "partOfSeason": { "name": "Season 1", "seasonNumber": 1 },
+            "partOfSeries": {
+              "name": "Example Show",
+              "@id": "https://www.crunchyroll.com/series/GABC12345/example-show"
+            }
+          }
+        </script>
+        <a href="/series/GABC12345/example-show">Example Show</a>
+        <h1>E8 - Current Episode</h1>
+      `,
+      'Season 1 Current Episode - Watch on Crunchyroll',
+    );
+
+    expect(
+      parseEpisodePage(
+        document,
+        new URL('https://www.crunchyroll.com/watch/NEW000002/current-episode'),
+        7,
+      ),
+    ).toBeNull();
+  });
+
   it('extracts stable series, season, and episode metadata', () => {
     const document = makeDocument(
       `

@@ -8,46 +8,54 @@ export default defineContentScript({
     document.documentElement.dataset.crunchyrollBookmark = 'loaded';
     let lastSentEpisodeId: string | null = null;
     let lastObservedUrl = location.href;
-    let retryTimer: ReturnType<typeof setTimeout> | undefined;
-    let retryCount = 0;
+    let inspectionTimer: ReturnType<typeof setTimeout> | undefined;
+    let saveInFlight = false;
+    let inspectAgain = false;
 
-    const inspect = () => {
+    const inspect = async () => {
+      if (saveInFlight) {
+        inspectAgain = true;
+        return;
+      }
       if (!parseWatchPath(location.pathname)) {
         lastSentEpisodeId = null;
-        retryCount = 0;
         return;
       }
 
       const bookmark = parseEpisodePage(document, new URL(location.href));
       if (bookmark && bookmark.episodeId !== lastSentEpisodeId) {
-        lastSentEpisodeId = bookmark.episodeId;
+        saveInFlight = true;
         document.documentElement.dataset.crunchyrollBookmark = 'saving';
-        void persistDetectedEpisode(browser.storage.local, bookmark)
-          .then(() => {
-            document.documentElement.dataset.crunchyrollBookmark = 'tracked';
-          })
-          .catch((error: unknown) => {
-            document.documentElement.dataset.crunchyrollBookmark = 'error';
-            console.error('[Crunchyroll Bookmark] Failed to save episode', error);
-            lastSentEpisodeId = null;
-          });
-        retryCount = 0;
+        try {
+          await persistDetectedEpisode(browser.storage.local, bookmark);
+          lastSentEpisodeId = bookmark.episodeId;
+          document.documentElement.dataset.crunchyrollBookmark = 'tracked';
+        } catch (error: unknown) {
+          document.documentElement.dataset.crunchyrollBookmark = 'error';
+          console.error('[Crunchyroll Bookmark] Failed to save episode', error);
+        } finally {
+          saveInFlight = false;
+          if (inspectAgain) {
+            inspectAgain = false;
+            scheduleInspect(0);
+          }
+        }
         return;
       }
 
-      if (!bookmark && retryCount < 20) {
+      if (!bookmark) {
         document.documentElement.dataset.crunchyrollBookmark = 'waiting';
-        retryCount += 1;
-        clearTimeout(retryTimer);
-        retryTimer = setTimeout(inspect, 500);
       }
+    };
+
+    const scheduleInspect = (delay = 100) => {
+      clearTimeout(inspectionTimer);
+      inspectionTimer = setTimeout(() => void inspect(), delay);
     };
 
     const handleNavigation = () => {
       lastSentEpisodeId = null;
-      retryCount = 0;
-      clearTimeout(retryTimer);
-      queueMicrotask(inspect);
+      scheduleInspect(0);
     };
 
     for (const methodName of ['pushState', 'replaceState'] as const) {
@@ -63,16 +71,19 @@ export default defineContentScript({
     window.addEventListener('crunchyroll-bookmark:navigation', handleNavigation);
 
     const observer = new MutationObserver(() => {
-      if (parseWatchPath(location.pathname)) inspect();
+      if (parseWatchPath(location.pathname)) scheduleInspect();
     });
     observer.observe(document.documentElement, { childList: true, subtree: true });
 
     window.setInterval(() => {
-      if (location.href === lastObservedUrl) return;
-      lastObservedUrl = location.href;
-      handleNavigation();
-    }, 500);
+      if (location.href !== lastObservedUrl) {
+        lastObservedUrl = location.href;
+        handleNavigation();
+        return;
+      }
+      if (parseWatchPath(location.pathname)) scheduleInspect(0);
+    }, 1000);
 
-    inspect();
+    scheduleInspect(0);
   },
 });

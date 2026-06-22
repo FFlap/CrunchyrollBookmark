@@ -122,7 +122,14 @@ export function parseEpisodePage(
   const watch = parseWatchPath(url.pathname);
   if (!watch) return null;
 
-  const structured = parseStructuredEpisode(document);
+  const parsedStructured = parseStructuredEpisode(document);
+  if (
+    parsedStructured?.watchUrl &&
+    new URL(parsedStructured.watchUrl, url.origin).pathname !== url.pathname
+  ) {
+    return null;
+  }
+  const structured = parsedStructured;
   const seriesLink = Array.from(document.querySelectorAll<HTMLAnchorElement>('a[href]')).find(
     (link) => SERIES_PATH.test(new URL(link.href, url.origin).pathname),
   );
